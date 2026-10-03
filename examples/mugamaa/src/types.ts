@@ -2,9 +2,20 @@ export type ThinkingLevel = "low" | "medium";
 export type OfficeRole = "planning" | "works" | "audit";
 export type ModelTier = "open" | "frontier" | "fallback";
 
+/**
+ * Provider identifiers routed through Mugamaa.
+ *
+ * `opencode-go` is the default runtime provider. It fronts Kimi K3, Grok
+ * 4.7, and GLM 5.3 Flash behind a single OpenAI-completions gateway. The
+ * remaining entries are retained for adapter extensibility only: the
+ * default policy never references them, and any future live route must
+ * match the verified set before it can appear in {@link DEFAULT_MODEL_POLICY}.
+ */
 export type ModelProvider =
+	| "opencode-go"
 	| "opencode"
 	| "codex"
+	| "openai-codex"
 	| "copilot"
 	| "litellm"
 	| "minimax-direct";

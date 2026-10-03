@@ -8,6 +8,7 @@ import { durableStorageIssue, runSample } from "../src/sample.ts";
 import type {
 	AuditInput,
 	AuditVerdict,
+	ModelPolicy,
 	ModelRoute,
 	OfficeRunner,
 	PlanningInput,
@@ -73,12 +74,16 @@ describe("Mugamaa Seed", () => {
 	});
 
 	it("falls back to MiniMax M3 only for roles whose policy permits fallback", async () => {
+		// Every OpenCode-go primary for planning, works, and audit is
+		// marked unavailable. Planning and works fall back to the
+		// minimax-direct/minimax-m3 fallback; audit falls back as well
+		// because both OpenCode-go primaries report capacity exhaustion.
 		const offices = new FixedOffices(
 			pass,
 			new Set([
-				"opencode/kimi-k3",
-				"opencode/deepseek-v4.1-flash",
-				"opencode/glm-5.3-flash",
+				"opencode-go/kimi-k3",
+				"opencode-go/grok-4.7",
+				"opencode-go/glm-5.3-flash",
 			]),
 		);
 		const state = await new Mugamaa({
@@ -96,12 +101,13 @@ describe("Mugamaa Seed", () => {
 				record.route?.provider === "minimax-direct" &&
 				record.route?.model === "minimax-m3",
 		);
-		expect(fallbackSuccesses).toHaveLength(2);
+		// Planning fallback + Works fallback + Audit fallback = 3.
+		expect(fallbackSuccesses).toHaveLength(3);
 		expect(
 			state.records.filter(
 				(record) => record.type === "model.capacity-exhausted",
 			),
-		).toHaveLength(3);
+		).toHaveLength(4);
 	});
 
 	it("stops immediately when an audit blocks the case", async () => {
@@ -140,10 +146,11 @@ describe("Mugamaa Seed", () => {
 		expect(state.records.at(-1)?.type).toBe("case.exhausted");
 	});
 
-	it("chooses the frontier Works primary route when it succeeds", async () => {
-		// The default policy lists two frontier Works routes and a
-		// minimax-direct/minimax-m3 fallback. When the frontier routes
-		// succeed normally, the fallback must never be invoked for Works.
+	it("chooses the opencode-go Works primary route when it succeeds", async () => {
+		// The default policy lists opencode-go/grok-4.7 as the Works
+		// primary and minimax-direct/minimax-m3 as the fallback. When
+		// the primary succeeds normally, the fallback must never be
+		// invoked for Works.
 		const workRoutesAttempted: ModelRoute[] = [];
 		class RecordingRunner implements OfficeRunner {
 			async plan(_input: PlanningInput, _route: ModelRoute) {
@@ -172,11 +179,11 @@ describe("Mugamaa Seed", () => {
 			maxIterations: 1,
 		});
 		expect(state.status).toBe("completed");
-		// Only the first frontier route was attempted; the second frontier
-		// route and the minimax-direct/minimax-m3 fallback were untouched.
+		// Only the opencode-go primary was attempted; the
+		// minimax-direct/minimax-m3 fallback was untouched.
 		expect(
 			workRoutesAttempted.map((route) => [route.provider, route.model]),
-		).toEqual([["codex", "gpt-5.6-sol"]]);
+		).toEqual([["opencode-go", "grok-4.7"]]);
 		const minimaxRoutes = workRoutesAttempted.filter(
 			(route) =>
 				route.provider === "minimax-direct" &&
@@ -185,13 +192,14 @@ describe("Mugamaa Seed", () => {
 		expect(minimaxRoutes).toHaveLength(0);
 	});
 
-	it("falls back to minimax-direct/minimax-m3 only after capacity exhaustion of frontier Works routes", async () => {
-		// Planning succeeds on its opencode/kimi-k3 route; both frontier
-		// Works routes throw classified ModelCapacityError (quota /
-		// capacity / token exhaustion). The engine must try them in policy
-		// order, then succeed on the minimax-direct/minimax-m3 fallback,
-		// and only then reach the audit phase. Non-capacity failures on the
-		// frontier would not trigger this fallback.
+	it("falls back to minimax-direct/minimax-m3 only after capacity exhaustion of the opencode-go Works primary", async () => {
+		// Planning succeeds on its opencode-go/kimi-k3 route; the
+		// opencode-go/grok-4.7 Works primary throws a classified
+		// ModelCapacityError (quota / capacity / token exhaustion).
+		// The engine must try the primary, then succeed on the
+		// minimax-direct/minimax-m3 fallback, and only then reach the
+		// audit phase. Non-capacity failures on the primary would not
+		// trigger this fallback.
 		const workRoutesAttempted: ModelRoute[] = [];
 		class RecordingRunner implements OfficeRunner {
 			async plan(_input: PlanningInput, _route: ModelRoute) {
@@ -232,26 +240,25 @@ describe("Mugamaa Seed", () => {
 			maxIterations: 1,
 		});
 		expect(state.status).toBe("completed");
-		// The two frontier Works routes were attempted first in policy
-		// order, then the minimax-direct/minimax-m3 fallback.
+		// The opencode-go/grok-4.7 Works primary was attempted first,
+		// then the minimax-direct/minimax-m3 fallback.
 		expect(
 			workRoutesAttempted.map((route) => [route.provider, route.model]),
 		).toEqual([
-			["codex", "gpt-5.6-sol"],
-			["copilot", "claude-opus-4.8"],
+			["opencode-go", "grok-4.7"],
 			["minimax-direct", "minimax-m3"],
 		]);
-		// The capacity-exhausted record was emitted for each frontier route
-		// exactly once; the minimax fallback produced a success record.
+		// The capacity-exhausted record was emitted for the primary
+		// route exactly once; the minimax fallback produced a success
+		// record.
 		const capacityExhausted = state.records.filter(
 			(record) => record.type === "model.capacity-exhausted",
 		);
-		expect(capacityExhausted).toHaveLength(2);
+		expect(capacityExhausted).toHaveLength(1);
 		expect(
 			capacityExhausted.every(
 				(record) =>
-					record.role === "works" &&
-					record.route?.tier === "frontier",
+					record.role === "works" && record.route?.tier === "open",
 			),
 		).toBe(true);
 		const minimaxSuccesses = state.records.filter(
@@ -263,12 +270,12 @@ describe("Mugamaa Seed", () => {
 		expect(minimaxSuccesses).toHaveLength(1);
 	});
 
-	it("does not fall back on Works when the frontier route throws a non-capacity error", async () => {
-		// The two frontier Works routes are wired to throw a plain Error
-		// (the kind malformed output and arbitrary provider/HTTP errors
-		// produce after the live runner classifies them). The engine must
-		// surface the error immediately without ever attempting the
-		// minimax-direct/minimax-m3 fallback.
+	it("does not fall back on Works when the primary route throws a non-capacity error", async () => {
+		// The opencode-go/grok-4.7 Works primary is wired to throw a
+		// plain Error (the kind malformed output and arbitrary
+		// provider/HTTP errors produce after the live runner classifies
+		// them). The engine must surface the error immediately without
+		// ever attempting the minimax-direct/minimax-m3 fallback.
 		const workRoutesAttempted: ModelRoute[] = [];
 		class RecordingRunner implements OfficeRunner {
 			async plan(_input: PlanningInput, _route: ModelRoute) {
@@ -306,18 +313,18 @@ describe("Mugamaa Seed", () => {
 		}
 		expect(caught).toBeInstanceOf(Error);
 		expect((caught as Error).message).toBe(
-			"Office transport rejected request: gpt-5.6-sol broken",
+			"Office transport rejected request: grok-4.7 broken",
 		);
-		// Only the first frontier route was attempted; the engine stopped
-		// at the non-capacity failure and never tried the second frontier
-		// route nor the minimax-direct/minimax-m3 fallback.
+		// Only the opencode-go primary was attempted; the engine stopped
+		// at the non-capacity failure and never tried the
+		// minimax-direct/minimax-m3 fallback.
 		expect(
 			workRoutesAttempted.map((route) => [route.provider, route.model]),
-		).toEqual([["codex", "gpt-5.6-sol"]]);
+		).toEqual([["opencode-go", "grok-4.7"]]);
 	});
 
 	it("rejects Works when every route, including the MiniMax fallback, exhausts capacity", async () => {
-		// Every Works route -- both frontier routes and the
+		// Every Works route -- the opencode-go/grok-4.7 primary and the
 		// minimax-direct/minimax-m3 fallback -- throws a classified
 		// ModelCapacityError. The engine must exhaust the policy in
 		// order, recording each attempt, and surface a deterministic
@@ -361,16 +368,140 @@ describe("Mugamaa Seed", () => {
 		expect((caught as Error).message).toBe(
 			"No model route remained for works",
 		);
-		// All three exact Works routes were attempted in policy order:
-		// the two frontier routes, then the minimax-direct fallback. Each
-		// attempt threw a classified ModelCapacityError, which is the only
-		// way the engine would continue iterating rather than re-throwing.
+		// Both Works routes were attempted in policy order: the
+		// opencode-go primary, then the minimax-direct fallback. Each
+		// attempt threw a classified ModelCapacityError, which is the
+		// only way the engine would continue iterating rather than
+		// re-throwing.
 		expect(
 			workRoutesAttempted.map((route) => [route.provider, route.model]),
 		).toEqual([
-			["codex", "gpt-5.6-sol"],
-			["copilot", "claude-opus-4.8"],
+			["opencode-go", "grok-4.7"],
 			["minimax-direct", "minimax-m3"],
 		]);
+	});
+});
+
+describe("Mugamaa v0.2 default policy regression", () => {
+	// The regression test recursively inspects the default policy
+	// and fails if any Codex/GPT route appears. It exists so the
+	// Phase 1 migration cannot silently regress the model surface:
+	// the only accepted providers in DEFAULT_MODEL_POLICY are
+	// `opencode-go` and `minimax-direct`, and no model whose id
+	// begins with `gpt-` may appear at any level of the policy tree.
+
+	const FORBIDDEN_PROVIDERS: ReadonlySet<string> = new Set([
+		"codex",
+		"openai-codex",
+		"copilot",
+		"opencode",
+	]);
+
+	function walk(routes: readonly ModelRoute[]): ModelRoute[] {
+		return routes.slice();
+	}
+
+	it("contains no Codex or GPT route at any level", () => {
+		const policy: ModelPolicy = DEFAULT_MODEL_POLICY;
+		const all: ModelRoute[] = [
+			...walk(policy.planning),
+			...walk(policy.works),
+			...walk(policy.audit.primary),
+			...walk(policy.audit.fallback),
+		];
+		const violations: string[] = [];
+		for (const route of all) {
+			if (FORBIDDEN_PROVIDERS.has(route.provider)) {
+				violations.push(
+					`forbidden provider ${route.provider} on ${route.provider}/${route.model}`,
+				);
+			}
+			if (route.model.startsWith("gpt-")) {
+				violations.push(
+					`forbidden GPT model id ${route.provider}/${route.model}`,
+				);
+			}
+			if (route.provider === "opencode-go") {
+				const allowed = new Set([
+					"kimi-k3",
+					"grok-4.7",
+					"glm-5.3-flash",
+				]);
+				if (!allowed.has(route.model)) {
+					violations.push(
+						`unrecognized opencode-go model ${route.provider}/${route.model}`,
+					);
+				}
+			}
+			if (
+				route.provider === "minimax-direct" &&
+				route.model !== "minimax-m3"
+			) {
+				violations.push(
+					`unrecognized direct provider model ${route.provider}/${route.model}`,
+				);
+			}
+		}
+		expect(violations).toEqual([]);
+	});
+
+	it("keeps the verified role shape for planning, works, and audit", () => {
+		expect(
+			DEFAULT_MODEL_POLICY.planning.map((route) => [
+				route.provider,
+				route.model,
+				route.thinking,
+			]),
+		).toEqual([
+			["opencode-go", "kimi-k3", "medium"],
+			["minimax-direct", "minimax-m3", "low"],
+		]);
+		expect(
+			DEFAULT_MODEL_POLICY.works.map((route) => [
+				route.provider,
+				route.model,
+				route.thinking,
+			]),
+		).toEqual([
+			["opencode-go", "grok-4.7", "medium"],
+			["minimax-direct", "minimax-m3", "low"],
+		]);
+		expect(
+			DEFAULT_MODEL_POLICY.audit.primary.map((route) => [
+				route.provider,
+				route.model,
+				route.thinking,
+			]),
+		).toEqual([
+			["opencode-go", "glm-5.3-flash", "medium"],
+			["opencode-go", "grok-4.7", "low"],
+		]);
+		expect(
+			DEFAULT_MODEL_POLICY.audit.fallback.map((route) => [
+				route.provider,
+				route.model,
+				route.thinking,
+			]),
+		).toEqual([["minimax-direct", "minimax-m3", "low"]]);
+	});
+
+	it("never routes an OpenCode MiniMax model", () => {
+		// Phase 1 invariant: the default policy routes only through
+		// `opencode-go` and `minimax-direct`. The runner never enters
+		// an OpenCode-hosted MiniMax route in source, tests, or
+		// records.
+		const policy: ModelPolicy = DEFAULT_MODEL_POLICY;
+		const routes = [
+			...policy.planning,
+			...policy.works,
+			...policy.audit.primary,
+			...policy.audit.fallback,
+		];
+		const opencodeMinimax = routes.filter(
+			(route) =>
+				route.provider.startsWith("opencode") &&
+				route.model === "minimax-m3",
+		);
+		expect(opencodeMinimax).toEqual([]);
 	});
 });

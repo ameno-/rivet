@@ -151,11 +151,11 @@ describe("createLiveRunner", () => {
 	});
 
 	it("uses the route's model verbatim without rewriting the request", async () => {
-		const frontierRoute = {
-			provider: "codex" as const,
-			model: "gpt-5.6-sol",
+		const opencodeRoute = {
+			provider: "opencode-go" as const,
+			model: "grok-4.7",
 			thinking: "medium" as const,
-			tier: "frontier" as const,
+			tier: "open" as const,
 		};
 		const transport = okTransport(
 			JSON.stringify({
@@ -173,13 +173,13 @@ describe("createLiveRunner", () => {
 				successConditions: ["c"],
 			},
 		};
-		await runner.work(input, frontierRoute);
-		expect(transport.calls[0]?.model).toBe("gpt-5.6-sol");
+		await runner.work(input, opencodeRoute);
+		expect(transport.calls[0]?.model).toBe("grok-4.7");
 	});
 
 	it("forwards the route's thinking level to the transport verbatim", async () => {
 		const transport = new FakeTransport(async (req) => {
-			if (req.model === "gpt-5.6-sol") {
+			if (req.model === "grok-4.7") {
 				return {
 					status: 200,
 					body: JSON.stringify({
@@ -208,10 +208,10 @@ describe("createLiveRunner", () => {
 			},
 		};
 		const mediumRoute = {
-			provider: "codex" as const,
-			model: "gpt-5.6-sol",
+			provider: "opencode-go" as const,
+			model: "grok-4.7",
 			thinking: "medium" as const,
-			tier: "frontier" as const,
+			tier: "open" as const,
 		};
 		await runner.work(input, mediumRoute);
 		expect(transport.calls[0]?.thinking).toBe("medium");
@@ -288,10 +288,10 @@ describe("createLiveRunner", () => {
 		);
 		const runner = createLiveRunner({ transport });
 		const bypassRoute = {
-			provider: "codex",
-			model: "gpt-5.6-sol",
+			provider: "opencode-go",
+			model: "grok-4.7",
 			thinking: "high",
-			tier: "frontier",
+			tier: "open",
 		} as unknown as ModelRoute;
 		await expect(runner.plan(planning, bypassRoute)).rejects.toThrow(
 			/Office runner rejected thinking value/,
@@ -338,10 +338,10 @@ describe("createLiveRunner", () => {
 		);
 		const runner = createLiveRunner({ transport });
 		const bypassRoute = {
-			provider: "codex",
-			model: "gpt-5.6-sol",
+			provider: "opencode-go",
+			model: "grok-4.7",
 			thinking: undefined,
-			tier: "frontier",
+			tier: "open",
 		} as unknown as ModelRoute;
 		await expect(runner.plan(planning, bypassRoute)).rejects.toThrow(
 			/Office runner rejected thinking value/,
@@ -386,10 +386,10 @@ describe("createLiveRunner", () => {
 			},
 		};
 		const mediumRoute = {
-			provider: "codex" as const,
-			model: "gpt-5.6-sol",
+			provider: "opencode-go" as const,
+			model: "grok-4.7",
 			thinking: "medium" as const,
-			tier: "frontier" as const,
+			tier: "open" as const,
 		};
 		await runner.work(input, mediumRoute);
 		expect(transport.calls[0]?.thinking).toBe("medium");

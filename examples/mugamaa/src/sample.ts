@@ -79,7 +79,7 @@ class StorageContractOffices implements OfficeRunner {
 	}
 
 	async audit(input: AuditInput, route: ModelRoute): Promise<AuditVerdict> {
-		if (input.iteration === 1 && route.model === "deepseek-v4.1-flash") {
+		if (input.iteration === 1 && route.model === "glm-5.3-flash") {
 			return {
 				decision: "revise",
 				rationale:

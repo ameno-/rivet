@@ -16,10 +16,14 @@ RIVET_ENGINE_BINARY="$PWD/target/debug/rivet-engine" \
 pnpm --filter example-mugamaa sample
 ```
 
-The model policy records the intended OpenCode, Codex, Copilot, and direct
-MiniMax routes. The seed sample uses deterministic office implementations;
-connecting those interfaces to live Pi actors is the next increment after the
-protocol and actor lifecycle are proven.
+The model policy records the intended OpenCode-go and direct MiniMax
+routes. The default policy resolves to verified Kimi, Grok, and GLM
+models through the OpenCode-go provider, with `minimax-direct/minimax-m3`
+as the sole fallback. Codex, OpenAI Codex, and Copilot provider entries
+remain on the type for adapter extensibility but never appear in the
+default policy. The seed sample uses deterministic office implementations;
+connecting those interfaces to live Pi actors is the next increment after
+the protocol and actor lifecycle are proven.
 
 The sample runs the durable-storage-contract task from GitHub issue #2 through
 two iterations. The first Audit requests a rollback requirement; the second
@@ -41,14 +45,21 @@ A modular live `OfficeRunner` adapter lives alongside the seed under
 ### Routing and fallback semantics
 
 - `ModelPolicy` remains the source of truth for role routes.
-- The `minimax-direct` provider routes `minimax-m3` and is backed at runtime
-  by an OpenAI-completions LiteLLM gateway. No OpenCode MiniMax route
-  appears in source or tests.
-- `works` tries frontier routes first (`codex/gpt-5.6-sol` and
-  `copilot/claude-opus-4.8`) and falls back to `minimax-direct/minimax-m3`
-  only when the frontier routes are exhausted by a `ModelCapacityError`.
-  Planning and audit also keep `minimax-direct/minimax-m3` as an explicit
-  fallback.
+- The `opencode-go` provider fronts Kimi K3, Grok 4.7, and GLM 5.3 Flash
+  through a single OpenAI-completions gateway. `minimax-direct` is the
+  sole fallback provider and routes `minimax-m3`. No OpenCode MiniMax
+  route appears in source or tests; the direct provider is reserved for
+  capacity recovery only.
+- `planning` tries `opencode-go/kimi-k3` first (medium thinking) and
+  falls back to `minimax-direct/minimax-m3` (low thinking) only when
+  the primary is exhausted by a `ModelCapacityError`.
+- `works` tries `opencode-go/grok-4.7` first (medium thinking) and falls
+  back to `minimax-direct/minimax-m3` (low thinking, capacity only) under
+  the same classification rule.
+- `audit` runs `opencode-go/glm-5.3-flash` (medium thinking) and
+  `opencode-go/grok-4.7` (low thinking) in parallel. If every primary
+  reports capacity exhaustion, `minimax-direct/minimax-m3` runs as the
+  single fallback.
 - The live runner validates the route's `thinking` value at the runner
   boundary and accepts only `"low"` and `"medium"`. Any other runtime
   value (cast, JSON-derived, otherwise malformed) is rejected before the
@@ -62,12 +73,11 @@ A modular live `OfficeRunner` adapter lives alongside the seed under
 
 ### Runtime caveats (read-only)
 
-- `gpt-5.6-sol` is cataloged for the Codex provider.
-- `claude-opus-4.8` is not yet in the runtime catalog; the policy entry
-  remains so the catalog is honored once available, but the live runner
-  will surface a reject error if no credential is configured.
-- `deepseek-v4.1-flash` is currently privacy-blocked; do not assume
-  availability even though the policy lists it.
+- `kimi-k3`, `grok-4.7`, and `glm-5.3-flash` are cataloged through the
+  `opencode-go` provider.
+- `minimax-m3` is the verified direct provider route and is reserved for
+  capacity-only fallback; the live runner never enters this route on a
+  successful primary.
 - The `live-runner.ts` adapter is wired through `createLiveRunner`; the
   `sample.ts` continues to use a deterministic office implementation so
   the test suite stays network-free.

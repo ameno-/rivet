@@ -59,8 +59,8 @@ describe("createLiveTransport", () => {
 		const { calls, fetchImpl } = captureHandler(200, reply);
 		const transport = makeTransport(fetchImpl);
 		await transport.request({
-			provider: "codex",
-			model: "gpt-5.6-sol",
+			provider: "opencode-go",
+			model: "grok-4.7",
 			thinking: "medium",
 			prompt: "produce work",
 		});
@@ -69,7 +69,7 @@ describe("createLiveTransport", () => {
 			string,
 			unknown
 		>;
-		expect(body.model).toBe("gpt-5.6-sol");
+		expect(body.model).toBe("grok-4.7");
 		expect(body.reasoning_effort).toBe("medium");
 		expect(body.messages).toEqual([
 			{ role: "user", content: "produce work" },
@@ -106,8 +106,8 @@ describe("createLiveTransport", () => {
 		let caught: unknown;
 		try {
 			await transport.request({
-				provider: "codex",
-				model: "gpt-5.6-sol",
+				provider: "opencode-go",
+				model: "grok-4.7",
 				thinking: "medium",
 				prompt: "produce work",
 			});
@@ -134,8 +134,8 @@ describe("createLiveTransport", () => {
 			let caught: unknown;
 			try {
 				await transport.request({
-					provider: "codex",
-					model: "gpt-5.6-sol",
+					provider: "opencode-go",
+					model: "grok-4.7",
 					thinking: "medium",
 					prompt: "produce work",
 				});

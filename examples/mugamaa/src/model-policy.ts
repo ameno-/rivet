@@ -5,6 +5,14 @@ import type {
 	ThinkingLevel,
 } from "./types.ts";
 
+/**
+ * Capacity-only direct MiniMax fallback. Always paired with `low` thinking
+ * because it is reserved for the cold-start recovery path after every
+ * primary route reports quota, rate-limit, or token-exhaustion. The
+ * runner never advertises an OpenCode MiniMax route; the verified model
+ * catalog for this provider routes `minimax-m3` exclusively through
+ * `minimax-direct`.
+ */
 const minimaxFallback: ModelRoute = {
 	provider: "minimax-direct",
 	model: "minimax-m3",
@@ -12,10 +20,21 @@ const minimaxFallback: ModelRoute = {
 	tier: "fallback",
 };
 
+/**
+ * Verified default policy for Mugamaa v0.2 Phase 1.
+ *
+ * Every route resolves to either an OpenCode-go fronted model or the
+ * direct MiniMax fallback. The Codex, OpenAI Codex, and Copilot
+ * providers and every model whose id begins with `gpt-` are explicitly
+ * absent: the legacy entries remain on the {@link ModelProvider} union
+ * for adapter extensibility only. The regression test
+ * `default policy contains no Codex or GPT route` enforces this
+ * invariant at the source level.
+ */
 export const DEFAULT_MODEL_POLICY: ModelPolicy = {
 	planning: [
 		{
-			provider: "opencode",
+			provider: "opencode-go",
 			model: "kimi-k3",
 			thinking: "medium",
 			tier: "open",
@@ -24,31 +43,25 @@ export const DEFAULT_MODEL_POLICY: ModelPolicy = {
 	],
 	works: [
 		{
-			provider: "codex",
-			model: "gpt-5.6-sol",
+			provider: "opencode-go",
+			model: "grok-4.7",
 			thinking: "medium",
-			tier: "frontier",
-		},
-		{
-			provider: "copilot",
-			model: "claude-opus-4.8",
-			thinking: "medium",
-			tier: "frontier",
+			tier: "open",
 		},
 		minimaxFallback,
 	],
 	audit: {
 		primary: [
 			{
-				provider: "opencode",
-				model: "deepseek-v4.1-flash",
+				provider: "opencode-go",
+				model: "glm-5.3-flash",
 				thinking: "medium",
 				tier: "open",
 			},
 			{
-				provider: "opencode",
-				model: "glm-5.3-flash",
-				thinking: "medium",
+				provider: "opencode-go",
+				model: "grok-4.7",
+				thinking: "low",
 				tier: "open",
 			},
 		],
