@@ -10,6 +10,10 @@ deterministic scripted offices. The manual operator can now use isolated Pi
 CLI workers; a later adapter can bind the same protocol to live Pi actor
 handles and the Inference Coordinator.
 
+The next implementation increment is specified in
+[`HANDOFF.md`](./HANDOFF.md). Its required verification and operational gates
+are in [`HANDOFF_RUNBOOK.md`](./HANDOFF_RUNBOOK.md).
+
 ```sh
 pnpm --filter example-mugamaa check-types
 RIVET_ENGINE_BINARY="$PWD/target/debug/rivet-engine" \
