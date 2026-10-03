@@ -6,8 +6,9 @@ verdict.
 
 The seed intentionally has no inbox, ticket adapter, repository mutation, or
 parallel case scheduling. Office implementations are injected. Tests use
-deterministic scripted offices; later adapters can use Pi actors and the
-Inference Coordinator without changing the case protocol.
+deterministic scripted offices. The manual operator can now use isolated Pi
+CLI workers; a later adapter can bind the same protocol to live Pi actor
+handles and the Inference Coordinator.
 
 ```sh
 pnpm --filter example-mugamaa check-types
@@ -21,9 +22,10 @@ routes. The default policy resolves to verified Kimi, Grok, and GLM
 models through the OpenCode-go provider, with `minimax-direct/minimax-m3`
 as the sole fallback. Codex, OpenAI Codex, and Copilot provider entries
 remain on the type for adapter extensibility but never appear in the
-default policy. The seed sample uses deterministic office implementations;
-connecting those interfaces to live Pi actors is the next increment after
-the protocol and actor lifecycle are proven.
+default policy. The seed sample remains deterministic. The manual operator has
+a live Pi CLI runner; connecting those interfaces to live `@rivet-dev/pi`
+actor handles is the next increment after the protocol and actor lifecycle are
+proven.
 
 The sample runs the durable-storage-contract task from GitHub issue #2 through
 two iterations. The first Audit requests a rollback requirement; the second
@@ -68,6 +70,45 @@ validated at runtime. Receipts are written through a sibling temporary file and
 an atomic rename, and contain case state only—never credentials, provider URLs,
 or bearer headers.
 
+### Pi-backed operator
+
+`src/pi-cli-runner.ts` is an explicit runner module for local dogfooding. Each
+office call starts one isolated, non-interactive Pi process with no tools,
+extensions, skills, prompt templates, context files, session persistence, or
+project-file approval:
+
+```sh
+PI_CODING_AGENT_DIR=/path/to/reviewed/pi-config \
+MUGAMAA_PI_EXECUTABLE=/absolute/path/to/pi \
+pnpm mugamaa run ./charter.json \
+  --runner-module ./src/pi-cli-runner.ts \
+  --records-dir ./.mugamaa/records
+```
+
+The Pi configuration must register every provider named by the model policy.
+For the default policy that means the OpenCode Go routes plus a
+`minimax-direct/minimax-m3` provider backed by the direct MiniMax subscription.
+The child inherits provider authentication at runtime; neither configuration
+nor credentials enter the persisted receipt. Pi output is byte-bounded, model
+calls are never retried by the transport, and only explicit capacity evidence
+activates policy fallback.
+
+### First live case
+
+`cases/github-ameno-rivet-2-live-2.charter.json` and its adjacent `.case.json`
+receipt preserve the first supervisor-accepted dogfood result for GitHub issue
+2. Kimi K3 planned, Grok 4.7 produced the contract, and GLM 5.3 Flash plus Grok
+4.7 audited it in parallel. The receipt reached `completed` in one iteration
+with nine ordered product/process records and no fallback route.
+
+The first draft is intentionally not checked in: both model audits passed it,
+but supervisor review caught that it assigned storage ownership to an actor
+generation. The accepted case explicitly assigns ownership to the stable Rivet
+Actor and its SQLite database across generations; only the active generation
+holds the exclusive writer lease. This is evidence that model audit consensus
+does not replace supervisor authority. A first-class supervisor veto/revision
+input remains future work; this run used a corrected second charter.
+
 ## Live OfficeRunner Adapter
 
 A modular live `OfficeRunner` adapter lives alongside the seed under
@@ -77,6 +118,7 @@ A modular live `OfficeRunner` adapter lives alongside the seed under
 | --- | --- |
 | `office-transport.ts` | Public request/response interfaces and capacity-vs-reject error classification. |
 | `office-live-transport.ts` | OpenAI-completions LiteLLM gateway transport; base URLs and credentials are injected at runtime only. |
+| `pi-cli-transport.ts` | Isolated one-shot Pi CLI transport with bounded output and capacity classification. |
 | `office-prompts.ts` | Pure prompt builders for plan/work/audit roles. |
 | `office-output.ts` | Pure strict-JSON parsers for the three structured outputs. |
 | `live-runner.ts` | Composes transport + prompts + parsers; implements `OfficeRunner`. |

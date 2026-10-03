@@ -51,6 +51,13 @@ export {
 	validateGoalCharter,
 } from "./operator.ts";
 export {
+	createPiCliTransport,
+	DEFAULT_MAX_OUTPUT_BYTES,
+	PI_CLI_STDIO,
+	type PiCliTransportOptions,
+	type SpawnFn,
+} from "./pi-cli-transport.ts";
+export {
 	auditActorKey,
 	createPiOfficeRunner,
 	type PiOfficeActorKey,

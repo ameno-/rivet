@@ -1,0 +1,25 @@
+{
+  "id": "github-ameno-rivet-2-live-2",
+  "title": "Define the durable storage adapter contract",
+  "objective": "Define the adapter contract that maps @earendil-works/pi-durable storage to Rivet Actor SQLite without weakening the actor single-writer invariant.",
+  "acceptanceCriteria": [
+    "A written storage mapping identifies every Pi Durable record and its Rivet ownership.",
+    "The adapter keeps all writes within one Rivet Actor's SQLite single-writer boundary.",
+    "A minimal conformance fixture can reopen and read the same committed conversation state.",
+    "New production SQLite reads have query-efficiency coverage where required by repository policy.",
+    "Migration and rollback conditions are explicit."
+  ],
+  "constraints": [
+    "Do not replace the existing AgentSession actor API.",
+    "Do not replay model or tool work in this issue.",
+    "Current @rivet-dev/pi stores actor header, entries, settings, and sandbox identity in actor SQLite; one actor generation owns one live AgentSession and serializes entries in append order.",
+    "The application supplies credentials, an active run is aborted on sleep or destroy, and the current integration persists a transcript rather than in-flight work.",
+    "Durable mode is a separate opt-in actor surface for conversations, entries, documents, submissions, and tasks; existing @rivet-dev/pi behavior remains the compatibility baseline.",
+    "No task may be exposed before its durable state commits, and a process restart must not silently replay a potentially mutating tool.",
+    "Supervisor correction from the rejected first draft: durable ownership belongs to the stable Rivet Actor and its SQLite database across generations. The currently active actor generation holds the exclusive writer lease; a restart or wake creates a new generation of the same actor that must reacquire and read the previously committed state.",
+    "The reopen conformance fixture must close one actor generation and verify a new generation of the same actor reacquires identical committed state. Never describe restart as reopening the same generation.",
+    "Treat integrations/pi/docs/ARCHITECTURE.md and integrations/pi/docs/ROADMAP.md as the governing references summarized above.",
+    "This case produces a reviewable contract, not code changes."
+  ],
+  "maxIterations": 2
+}

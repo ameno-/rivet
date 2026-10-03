@@ -75,6 +75,9 @@ website/redirects.caddy
 # Examples
 # Most example `public/` directories are build artifacts.
 examples/*/public/
+# Mugamaa operator receipts are runtime state. Accepted evidence is copied to
+# examples/mugamaa/cases/ explicitly.
+/.mugamaa/
 # Keep the checked-in static assets for multiplayer game patterns.
 !examples/multiplayer-game-patterns/public/
 !examples/multiplayer-game-patterns/public/**
