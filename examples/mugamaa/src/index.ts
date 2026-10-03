@@ -31,5 +31,18 @@ export {
 	type OfficeTransportRequest,
 	type OfficeTransportResponse,
 } from "./office-transport.ts";
+export {
+	auditActorKey,
+	createPiOfficeRunner,
+	type PiOfficeActorKey,
+	type PiOfficeActorResolver,
+	type PiOfficeErrorClassifier,
+	type PiOfficeHandle,
+	type PiOfficeRunnerOptions,
+	planningActorKey,
+	sanitizeKeySegment,
+	unsanitizeKeySegment,
+	worksActorKey,
+} from "./pi-office-runner.ts";
 export { RecordsOffice } from "./records.ts";
 export type * from "./types.ts";
