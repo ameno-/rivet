@@ -6,7 +6,8 @@
 	"scripts": {
 		"check-types": "tsc --noEmit",
 		"test": "vitest run",
-		"sample": "tsx src/sample.ts"
+		"sample": "tsx src/sample.ts",
+		"mugamaa": "tsx src/operator-cli.ts"
 	},
 	"dependencies": {
 		"rivetkit": "workspace:*"

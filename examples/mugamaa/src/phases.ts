@@ -10,8 +10,6 @@ import type {
 	OfficeRole,
 	OfficeRunner,
 	PlanningInput,
-	ProductArtifact,
-	WorkOrder,
 	WorksInput,
 } from "./types.ts";
 

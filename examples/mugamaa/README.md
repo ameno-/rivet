@@ -47,6 +47,27 @@ single-attempt error behavior. The one-shot actor test uses an isolated
 database can wake stale test actors. A process-kill-and-reopen harness remains
 required before claiming live crash recovery.
 
+## Manual Operator Commands
+
+The operator runs exactly one explicit Goal Charter with an explicitly supplied
+runner module and stores the complete CaseState receipt locally:
+
+```sh
+pnpm mugamaa run ./charter.json \
+  --runner-module ./runner.ts \
+  --records-dir ./.mugamaa/records
+
+pnpm mugamaa inspect <case-id> \
+  --records-dir ./.mugamaa/records
+```
+
+The runner module must export either `runner: OfficeRunner` or
+`createRunner(): OfficeRunner | Promise<OfficeRunner>`. Mugamaa never loads an
+ambient runner. Charter shape, case IDs, runner exports, and stored receipts are
+validated at runtime. Receipts are written through a sibling temporary file and
+an atomic rename, and contain case state only—never credentials, provider URLs,
+or bearer headers.
+
 ## Live OfficeRunner Adapter
 
 A modular live `OfficeRunner` adapter lives alongside the seed under

@@ -1,4 +1,5 @@
 export { createMugamaaActor } from "./actor.ts";
+export { isCharterValidationError } from "./charter-validation.ts";
 export { createCaseState, Mugamaa, type MugamaaOptions } from "./engine.ts";
 export { createLiveRunner, type LiveRunnerOptions } from "./live-runner.ts";
 export {
@@ -31,6 +32,24 @@ export {
 	type OfficeTransportRequest,
 	type OfficeTransportResponse,
 } from "./office-transport.ts";
+export {
+	assertSafeCaseId,
+	CaseReceiptError,
+	CaseReceiptStore,
+	CharterValidationError,
+	type InspectOperatorOptions,
+	inspectOperator,
+	loadOfficeRunner,
+	OperatorError,
+	type OperatorInspectSummary,
+	type OperatorRunSummary,
+	RunnerModuleError,
+	type RunOperatorOptions,
+	runOperator,
+	summarizeInspect,
+	summarizeRun,
+	validateGoalCharter,
+} from "./operator.ts";
 export {
 	auditActorKey,
 	createPiOfficeRunner,

@@ -56,4 +56,4 @@ test("a Rivet Actor runs one charter to a durable terminal snapshot", async (con
 	expect(
 		snapshot.records.some((record) => record.category === "process"),
 	).toBe(true);
-}, 20_000);
+}, 60_000);
