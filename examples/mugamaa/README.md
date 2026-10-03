@@ -29,6 +29,24 @@ The sample runs the durable-storage-contract task from GitHub issue #2 through
 two iterations. The first Audit requests a rollback requirement; the second
 passes the revised artifact.
 
+## Phase-durable Actor
+
+The Rivet Actor commits one workflow step for initialization and separate
+Planning, Works, Audit, and Decision steps for every iteration. Product and
+Process records created by a phase are stored in actor state before the next
+phase begins. The in-memory `Mugamaa.run()` path uses the same phase helpers, so
+the actor and direct runner retain identical routing, fallback, verdict, and
+record-ordering behavior.
+
+Planning, Works, and Audit steps use `maxRetries: 0` and no timeout. Completed
+steps replay from Rivet workflow history; an interrupted or ambiguous model
+action blocks the workflow instead of being silently issued again. Focused
+tests cover every phase, terminal decision, record ordering, helper parity, and
+single-attempt error behavior. The one-shot actor test uses an isolated
+`RIVETKIT_STORAGE_PATH` and engine port because reusing the shared local engine
+database can wake stale test actors. A process-kill-and-reopen harness remains
+required before claiming live crash recovery.
+
 ## Live OfficeRunner Adapter
 
 A modular live `OfficeRunner` adapter lives alongside the seed under
