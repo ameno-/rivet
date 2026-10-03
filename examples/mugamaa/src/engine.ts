@@ -1,16 +1,17 @@
-import { isModelCapacityError } from "./model-policy.ts";
+import {
+	decidePhaseOutcome,
+	initializeCase,
+	recordCaseExhausted,
+	runAuditPhase,
+	runPlanningPhase,
+	runWorksPhase,
+} from "./phases.ts";
 import { RecordsOffice } from "./records.ts";
 import type {
-	AuditInput,
-	AuditVerdict,
 	CaseState,
 	GoalCharter,
 	ModelPolicy,
-	ModelRoute,
-	OfficeRole,
 	OfficeRunner,
-	PlanningInput,
-	WorksInput,
 } from "./types.ts";
 
 export function createCaseState(charter: GoalCharter): CaseState {
@@ -58,7 +59,7 @@ export class Mugamaa {
 	async run(charter: GoalCharter): Promise<CaseState> {
 		const state = createCaseState(charter);
 		const records = new RecordsOffice(state, this.#now);
-		records.append("product", "case.started", { charter: state.charter });
+		initializeCase(state, records);
 
 		for (
 			let iteration = 1;
@@ -66,145 +67,24 @@ export class Mugamaa {
 			iteration++
 		) {
 			state.iteration = iteration;
-			state.status = "planning";
-			const planningInput: PlanningInput = {
-				charter,
-				iteration,
-				previousArtifact: state.artifact,
-				previousVerdicts: state.verdicts,
-			};
-			const workOrder = await this.#withFallback(
-				"planning",
-				this.#policy.planning,
-				(route) => this.#runner.plan(planningInput, route),
-				records,
-			);
-			state.workOrder = workOrder;
-			records.append("product", "work-order.issued", workOrder, {
-				role: "planning",
-			});
-
-			state.status = "working";
-			const worksInput: WorksInput = { ...planningInput, workOrder };
-			const artifact = await this.#withFallback(
-				"works",
-				this.#policy.works,
-				(route) => this.#runner.work(worksInput, route),
-				records,
-			);
-			state.artifact = artifact;
-			records.append("product", "artifact.produced", artifact, {
-				role: "works",
-			});
-
-			state.status = "auditing";
-			const auditInput: AuditInput = {
-				charter,
-				iteration,
-				workOrder,
-				artifact,
-			};
-			const verdicts = await this.#auditAtScale(auditInput, records);
-			state.verdicts = verdicts;
-			records.append(
-				"product",
-				"audit.completed",
-				{ verdicts },
-				{ role: "audit" },
-			);
-
-			if (verdicts.some((verdict) => verdict.decision === "blocked")) {
-				state.status = "blocked";
-				records.append("product", "case.blocked", { verdicts });
+			await runPlanningPhase(state, records, this.#runner, this.#policy);
+			await runWorksPhase(state, records, this.#runner, this.#policy);
+			await runAuditPhase(state, records, this.#runner, this.#policy);
+			const decision = decidePhaseOutcome(state, records);
+			if (
+				decision.outcome.kind === "complete" ||
+				decision.outcome.kind === "blocked"
+			) {
 				return state;
 			}
-			if (verdicts.every((verdict) => verdict.decision === "pass")) {
-				state.status = "completed";
-				records.append("product", "case.completed", { artifact });
+			if (iteration === charter.maxIterations) {
+				recordCaseExhausted(state, records);
 				return state;
 			}
-
-			state.status = "revising";
-			records.append("product", "case.revision-requested", { verdicts });
 		}
 
-		state.status = "exhausted";
-		records.append("product", "case.exhausted", {
-			maxIterations: charter.maxIterations,
-		});
+		// Defensive fallback: the bounded loop returns on its final iteration.
+		recordCaseExhausted(state, records);
 		return state;
-	}
-
-	async #auditAtScale(
-		input: AuditInput,
-		records: RecordsOffice,
-	): Promise<AuditVerdict[]> {
-		const attempts = await Promise.all(
-			this.#policy.audit.primary.map(async (route) => {
-				try {
-					const verdict = await this.#runner.audit(input, route);
-					records.append(
-						"process",
-						"model.succeeded",
-						{},
-						{ role: "audit", route },
-					);
-					return verdict;
-				} catch (error) {
-					if (!isModelCapacityError(error)) throw error;
-					records.append(
-						"process",
-						"model.capacity-exhausted",
-						{ message: error.message },
-						{
-							role: "audit",
-							route,
-						},
-					);
-					return undefined;
-				}
-			}),
-		);
-		const verdicts = attempts.filter(
-			(verdict): verdict is AuditVerdict => verdict !== undefined,
-		);
-		if (verdicts.length > 0) return verdicts;
-		return [
-			await this.#withFallback(
-				"audit",
-				this.#policy.audit.fallback,
-				(route) => this.#runner.audit(input, route),
-				records,
-			),
-		];
-	}
-
-	async #withFallback<T>(
-		role: OfficeRole,
-		routes: readonly ModelRoute[],
-		run: (route: ModelRoute) => Promise<T>,
-		records: RecordsOffice,
-	): Promise<T> {
-		for (const route of routes) {
-			try {
-				const output = await run(route);
-				records.append(
-					"process",
-					"model.succeeded",
-					{},
-					{ role, route },
-				);
-				return output;
-			} catch (error) {
-				if (!isModelCapacityError(error)) throw error;
-				records.append(
-					"process",
-					"model.capacity-exhausted",
-					{ message: error.message },
-					{ role, route },
-				);
-			}
-		}
-		throw new Error(`No model route remained for ${role}`);
 	}
 }

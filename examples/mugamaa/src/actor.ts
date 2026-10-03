@@ -1,6 +1,15 @@
 import { type ActorContext, actor } from "rivetkit";
-import { workflow } from "rivetkit/workflow";
-import { createCaseState, Mugamaa } from "./engine.ts";
+import { Loop, workflow } from "rivetkit/workflow";
+import { createCaseState } from "./engine.ts";
+import {
+	decidePhaseOutcome,
+	initializeCase,
+	recordCaseExhausted,
+	runAuditPhase,
+	runPlanningPhase,
+	runWorksPhase,
+} from "./phases.ts";
+import { RecordsOffice } from "./records.ts";
 import type {
 	CaseState,
 	GoalCharter,
@@ -23,6 +32,15 @@ type MugamaaActions = {
 	getSnapshot: (context: MugamaaContext) => CaseState;
 };
 
+const NO_RETRY_MODEL_STEP = { maxRetries: 0, timeout: 0 } as const;
+
+/**
+ * Phase-durable Mugamaa actor.
+ *
+ * Every model phase is a distinct zero-retry workflow step. A completed step
+ * replays from workflow history after restart; an ambiguous in-flight model
+ * action blocks instead of being issued again.
+ */
 export function createMugamaaActor(runner: OfficeRunner, policy: ModelPolicy) {
 	return actor<
 		CaseState,
@@ -37,17 +55,88 @@ export function createMugamaaActor(runner: OfficeRunner, policy: ModelPolicy) {
 	>({
 		createState: (_c, charter: GoalCharter) => createCaseState(charter),
 		run: workflow(async (ctx) => {
-			const result = await ctx.step({
-				name: "run-seed-case",
-				maxRetries: 0,
-				timeout: 0,
-				run: async (step) =>
-					await new Mugamaa({ policy, runner }).run(
-						step.state.charter,
-					),
+			await ctx.step("initialize", async (step) => {
+				initializeCase(
+					step.state,
+					new RecordsOffice(step.state, Date.now),
+				);
 			});
-			await ctx.step("publish-seed-case", async (step) => {
-				Object.assign(step.state, result);
+
+			await ctx.loop("iterate-case", async (loopCtx) => {
+				await loopCtx.step("advance-iteration", async (step) => {
+					step.state.iteration += 1;
+				});
+
+				await loopCtx.step({
+					name: "planning",
+					...NO_RETRY_MODEL_STEP,
+					run: async (step) => {
+						await runPlanningPhase(
+							step.state,
+							new RecordsOffice(step.state, Date.now),
+							runner,
+							policy,
+						);
+					},
+				});
+
+				await loopCtx.step({
+					name: "works",
+					...NO_RETRY_MODEL_STEP,
+					run: async (step) => {
+						await runWorksPhase(
+							step.state,
+							new RecordsOffice(step.state, Date.now),
+							runner,
+							policy,
+						);
+					},
+				});
+
+				await loopCtx.step({
+					name: "audit",
+					...NO_RETRY_MODEL_STEP,
+					run: async (step) => {
+						await runAuditPhase(
+							step.state,
+							new RecordsOffice(step.state, Date.now),
+							runner,
+							policy,
+						);
+					},
+				});
+
+				const decision = await loopCtx.step("decision", async (step) =>
+					decidePhaseOutcome(
+						step.state,
+						new RecordsOffice(step.state, Date.now),
+					),
+				);
+
+				if (
+					decision.outcome.kind === "complete" ||
+					decision.outcome.kind === "blocked"
+				) {
+					return Loop.break(undefined);
+				}
+
+				const exhausted = await loopCtx.step(
+					"check-exhaustion",
+					async (step) =>
+						step.state.iteration >=
+						step.state.charter.maxIterations,
+				);
+				if (exhausted) {
+					await loopCtx.step("record-exhaustion", async (step) => {
+						recordCaseExhausted(
+							step.state,
+							new RecordsOffice(step.state, Date.now),
+						);
+					});
+					return Loop.break(undefined);
+				}
+
+				return Loop.continue(undefined);
 			});
 		}),
 		actions: {
