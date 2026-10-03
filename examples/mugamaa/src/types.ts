@@ -2,8 +2,15 @@ export type ThinkingLevel = "low" | "medium";
 export type OfficeRole = "planning" | "works" | "audit";
 export type ModelTier = "open" | "frontier" | "fallback";
 
+export type ModelProvider =
+	| "opencode"
+	| "codex"
+	| "copilot"
+	| "litellm"
+	| "minimax-direct";
+
 export interface ModelRoute {
-	provider: "opencode" | "codex" | "copilot" | "litellm";
+	provider: ModelProvider;
 	model: string;
 	thinking: ThinkingLevel;
 	tier: ModelTier;

@@ -1,7 +1,7 @@
 import type { ModelPolicy, ModelRoute, OfficeRole } from "./types.ts";
 
 const minimaxFallback: ModelRoute = {
-	provider: "litellm",
+	provider: "minimax-direct",
 	model: "minimax-m3",
 	thinking: "low",
 	tier: "fallback",
@@ -30,7 +30,6 @@ export const DEFAULT_MODEL_POLICY: ModelPolicy = {
 			thinking: "medium",
 			tier: "frontier",
 		},
-		minimaxFallback,
 	],
 	audit: {
 		primary: [

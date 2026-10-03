@@ -71,15 +71,10 @@ describe("Mugamaa Seed", () => {
 		);
 	});
 
-	it("falls back to MiniMax M3 after frontier capacity exhaustion", async () => {
+	it("falls back to MiniMax M3 only for roles whose policy permits fallback", async () => {
 		const offices = new FixedOffices(
 			pass,
-			new Set([
-				"gpt-5.6-sol",
-				"claude-opus-4.8",
-				"deepseek-v4.1-flash",
-				"glm-5.3-flash",
-			]),
+			new Set(["kimi-k3", "deepseek-v4.1-flash", "glm-5.3-flash"]),
 		);
 		const state = await new Mugamaa({
 			policy: DEFAULT_MODEL_POLICY,
@@ -93,6 +88,7 @@ describe("Mugamaa Seed", () => {
 		const fallbackSuccesses = state.records.filter(
 			(record) =>
 				record.type === "model.succeeded" &&
+				record.route?.provider === "minimax-direct" &&
 				record.route?.model === "minimax-m3",
 		);
 		expect(fallbackSuccesses).toHaveLength(2);
@@ -100,7 +96,7 @@ describe("Mugamaa Seed", () => {
 			state.records.filter(
 				(record) => record.type === "model.capacity-exhausted",
 			),
-		).toHaveLength(4);
+		).toHaveLength(3);
 	});
 
 	it("stops immediately when an audit blocks the case", async () => {
@@ -137,5 +133,64 @@ describe("Mugamaa Seed", () => {
 		expect(state.status).toBe("exhausted");
 		expect(state.iteration).toBe(2);
 		expect(state.records.at(-1)?.type).toBe("case.exhausted");
+	});
+
+	it("exhausts the frontier Works routes and never reaches minimax-direct/minimax-m3", async () => {
+		// Planning uses the deterministic opencode/kimi-k3 route; the two
+		// frontier Works routes are capacity-exhausted. The audit phase is
+		// unreachable because Works itself throws before reaching it. This
+		// test asserts that the engine exhausts the frontier works routes,
+		// rejects the case with the deterministic "No model route remained"
+		// error, and never invokes minimax-direct/minimax-m3.
+		const workRoutesAttempted: ModelRoute[] = [];
+		class RecordingRunner implements OfficeRunner {
+			async plan(_input: PlanningInput, _route: ModelRoute) {
+				return order;
+			}
+			async work(
+				_input: WorksInput,
+				route: ModelRoute,
+			): Promise<ProductArtifact> {
+				workRoutesAttempted.push(route);
+				throw new ModelCapacityError(`${route.model} exhausted`);
+			}
+			async audit(
+				_input: AuditInput,
+				_route: ModelRoute,
+			): Promise<AuditVerdict> {
+				throw new Error("audit should not be invoked");
+			}
+		}
+		const engine = new Mugamaa({
+			policy: DEFAULT_MODEL_POLICY,
+			runner: new RecordingRunner(),
+			now: () => 1,
+		});
+		let caught: unknown;
+		try {
+			await engine.run({
+				...durableStorageIssue,
+				maxIterations: 1,
+			});
+		} catch (error) {
+			caught = error;
+		}
+		expect(caught).toBeInstanceOf(Error);
+		expect((caught as Error).message).toBe(
+			"No model route remained for works",
+		);
+
+		// The two frontier Works routes were attempted in policy order.
+		expect(workRoutesAttempted.map((route) => route.model)).toEqual([
+			"gpt-5.6-sol",
+			"claude-opus-4.8",
+		]);
+		// minimax-direct/minimax-m3 was never invoked on any phase.
+		const minimaxRoutes = workRoutesAttempted.filter(
+			(route) =>
+				route.provider === "minimax-direct" &&
+				route.model === "minimax-m3",
+		);
+		expect(minimaxRoutes).toHaveLength(0);
 	});
 });
