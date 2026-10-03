@@ -1,4 +1,4 @@
-import { ModelCapacityError } from "./model-policy.ts";
+import { assertAcceptedThinking, ModelCapacityError } from "./model-policy.ts";
 import {
 	parseAuditVerdict,
 	parseProductArtifact,
@@ -80,11 +80,17 @@ async function transportRequest(
 	route: ModelRoute,
 	prompt: string,
 ): Promise<string> {
+	// Runtime guard at the live runner boundary: the route's thinking level
+	// must be one of the accepted values before any transport call is
+	// attempted. We do not silently clamp — a malformed value (cast,
+	// JSON-derived, or otherwise) must surface here so the caller can fix
+	// the wiring instead of receiving a quietly-downgraded request.
+	const thinking = assertAcceptedThinking(route.thinking);
 	try {
 		const response = await transport.request({
 			provider: route.provider,
 			model: route.model,
-			thinking: route.thinking,
+			thinking,
 			prompt,
 		});
 		return response.body;

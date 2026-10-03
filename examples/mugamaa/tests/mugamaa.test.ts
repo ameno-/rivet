@@ -50,8 +50,9 @@ class FixedOffices implements OfficeRunner {
 		return this.verdict;
 	}
 	#check(route: ModelRoute) {
-		if (this.unavailable.has(route.model))
-			throw new ModelCapacityError(`${route.model} exhausted`);
+		const identity = `${route.provider}/${route.model}`;
+		if (this.unavailable.has(identity))
+			throw new ModelCapacityError(`${identity} exhausted`);
 	}
 }
 
@@ -74,7 +75,11 @@ describe("Mugamaa Seed", () => {
 	it("falls back to MiniMax M3 only for roles whose policy permits fallback", async () => {
 		const offices = new FixedOffices(
 			pass,
-			new Set(["kimi-k3", "deepseek-v4.1-flash", "glm-5.3-flash"]),
+			new Set([
+				"opencode/kimi-k3",
+				"opencode/deepseek-v4.1-flash",
+				"opencode/glm-5.3-flash",
+			]),
 		);
 		const state = await new Mugamaa({
 			policy: DEFAULT_MODEL_POLICY,
@@ -135,13 +140,10 @@ describe("Mugamaa Seed", () => {
 		expect(state.records.at(-1)?.type).toBe("case.exhausted");
 	});
 
-	it("exhausts the frontier Works routes and never reaches minimax-direct/minimax-m3", async () => {
-		// Planning uses the deterministic opencode/kimi-k3 route; the two
-		// frontier Works routes are capacity-exhausted. The audit phase is
-		// unreachable because Works itself throws before reaching it. This
-		// test asserts that the engine exhausts the frontier works routes,
-		// rejects the case with the deterministic "No model route remained"
-		// error, and never invokes minimax-direct/minimax-m3.
+	it("chooses the frontier Works primary route when it succeeds", async () => {
+		// The default policy lists two frontier Works routes and a
+		// minimax-direct/minimax-m3 fallback. When the frontier routes
+		// succeed normally, the fallback must never be invoked for Works.
 		const workRoutesAttempted: ModelRoute[] = [];
 		class RecordingRunner implements OfficeRunner {
 			async plan(_input: PlanningInput, _route: ModelRoute) {
@@ -152,7 +154,187 @@ describe("Mugamaa Seed", () => {
 				route: ModelRoute,
 			): Promise<ProductArtifact> {
 				workRoutesAttempted.push(route);
-				throw new ModelCapacityError(`${route.model} exhausted`);
+				return artifact;
+			}
+			async audit(
+				_input: AuditInput,
+				_route: ModelRoute,
+			): Promise<AuditVerdict> {
+				return pass;
+			}
+		}
+		const state = await new Mugamaa({
+			policy: DEFAULT_MODEL_POLICY,
+			runner: new RecordingRunner(),
+			now: () => 1,
+		}).run({
+			...durableStorageIssue,
+			maxIterations: 1,
+		});
+		expect(state.status).toBe("completed");
+		// Only the first frontier route was attempted; the second frontier
+		// route and the minimax-direct/minimax-m3 fallback were untouched.
+		expect(
+			workRoutesAttempted.map((route) => [route.provider, route.model]),
+		).toEqual([["codex", "gpt-5.6-sol"]]);
+		const minimaxRoutes = workRoutesAttempted.filter(
+			(route) =>
+				route.provider === "minimax-direct" &&
+				route.model === "minimax-m3",
+		);
+		expect(minimaxRoutes).toHaveLength(0);
+	});
+
+	it("falls back to minimax-direct/minimax-m3 only after capacity exhaustion of frontier Works routes", async () => {
+		// Planning succeeds on its opencode/kimi-k3 route; both frontier
+		// Works routes throw classified ModelCapacityError (quota /
+		// capacity / token exhaustion). The engine must try them in policy
+		// order, then succeed on the minimax-direct/minimax-m3 fallback,
+		// and only then reach the audit phase. Non-capacity failures on the
+		// frontier would not trigger this fallback.
+		const workRoutesAttempted: ModelRoute[] = [];
+		class RecordingRunner implements OfficeRunner {
+			async plan(_input: PlanningInput, _route: ModelRoute) {
+				return order;
+			}
+			async work(
+				_input: WorksInput,
+				route: ModelRoute,
+			): Promise<ProductArtifact> {
+				workRoutesAttempted.push(route);
+				// Throw ModelCapacityError for every route except the
+				// exact minimax-direct/minimax-m3 fallback. The correct
+				// OR logic (De Morgan over "provider AND model") rejects
+				// anything that is not both the AND-identical fallback.
+				if (
+					route.provider !== "minimax-direct" ||
+					route.model !== "minimax-m3"
+				) {
+					throw new ModelCapacityError(
+						`${route.provider}/${route.model} exhausted`,
+					);
+				}
+				return artifact;
+			}
+			async audit(
+				_input: AuditInput,
+				_route: ModelRoute,
+			): Promise<AuditVerdict> {
+				return pass;
+			}
+		}
+		const state = await new Mugamaa({
+			policy: DEFAULT_MODEL_POLICY,
+			runner: new RecordingRunner(),
+			now: () => 1,
+		}).run({
+			...durableStorageIssue,
+			maxIterations: 1,
+		});
+		expect(state.status).toBe("completed");
+		// The two frontier Works routes were attempted first in policy
+		// order, then the minimax-direct/minimax-m3 fallback.
+		expect(
+			workRoutesAttempted.map((route) => [route.provider, route.model]),
+		).toEqual([
+			["codex", "gpt-5.6-sol"],
+			["copilot", "claude-opus-4.8"],
+			["minimax-direct", "minimax-m3"],
+		]);
+		// The capacity-exhausted record was emitted for each frontier route
+		// exactly once; the minimax fallback produced a success record.
+		const capacityExhausted = state.records.filter(
+			(record) => record.type === "model.capacity-exhausted",
+		);
+		expect(capacityExhausted).toHaveLength(2);
+		expect(
+			capacityExhausted.every(
+				(record) =>
+					record.role === "works" &&
+					record.route?.tier === "frontier",
+			),
+		).toBe(true);
+		const minimaxSuccesses = state.records.filter(
+			(record) =>
+				record.type === "model.succeeded" &&
+				record.route?.provider === "minimax-direct" &&
+				record.route?.model === "minimax-m3",
+		);
+		expect(minimaxSuccesses).toHaveLength(1);
+	});
+
+	it("does not fall back on Works when the frontier route throws a non-capacity error", async () => {
+		// The two frontier Works routes are wired to throw a plain Error
+		// (the kind malformed output and arbitrary provider/HTTP errors
+		// produce after the live runner classifies them). The engine must
+		// surface the error immediately without ever attempting the
+		// minimax-direct/minimax-m3 fallback.
+		const workRoutesAttempted: ModelRoute[] = [];
+		class RecordingRunner implements OfficeRunner {
+			async plan(_input: PlanningInput, _route: ModelRoute) {
+				return order;
+			}
+			async work(
+				_input: WorksInput,
+				route: ModelRoute,
+			): Promise<ProductArtifact> {
+				workRoutesAttempted.push(route);
+				throw new Error(
+					`Office transport rejected request: ${route.model} broken`,
+				);
+			}
+			async audit(
+				_input: AuditInput,
+				_route: ModelRoute,
+			): Promise<AuditVerdict> {
+				throw new Error("audit should not be invoked");
+			}
+		}
+		const engine = new Mugamaa({
+			policy: DEFAULT_MODEL_POLICY,
+			runner: new RecordingRunner(),
+			now: () => 1,
+		});
+		let caught: unknown;
+		try {
+			await engine.run({
+				...durableStorageIssue,
+				maxIterations: 1,
+			});
+		} catch (error) {
+			caught = error;
+		}
+		expect(caught).toBeInstanceOf(Error);
+		expect((caught as Error).message).toBe(
+			"Office transport rejected request: gpt-5.6-sol broken",
+		);
+		// Only the first frontier route was attempted; the engine stopped
+		// at the non-capacity failure and never tried the second frontier
+		// route nor the minimax-direct/minimax-m3 fallback.
+		expect(
+			workRoutesAttempted.map((route) => [route.provider, route.model]),
+		).toEqual([["codex", "gpt-5.6-sol"]]);
+	});
+
+	it("rejects Works when every route, including the MiniMax fallback, exhausts capacity", async () => {
+		// Every Works route -- both frontier routes and the
+		// minimax-direct/minimax-m3 fallback -- throws a classified
+		// ModelCapacityError. The engine must exhaust the policy in
+		// order, recording each attempt, and surface a deterministic
+		// rejection rather than silently dropping the case.
+		const workRoutesAttempted: ModelRoute[] = [];
+		class RecordingRunner implements OfficeRunner {
+			async plan(_input: PlanningInput, _route: ModelRoute) {
+				return order;
+			}
+			async work(
+				_input: WorksInput,
+				route: ModelRoute,
+			): Promise<ProductArtifact> {
+				workRoutesAttempted.push(route);
+				throw new ModelCapacityError(
+					`${route.provider}/${route.model} exhausted`,
+				);
 			}
 			async audit(
 				_input: AuditInput,
@@ -179,18 +361,16 @@ describe("Mugamaa Seed", () => {
 		expect((caught as Error).message).toBe(
 			"No model route remained for works",
 		);
-
-		// The two frontier Works routes were attempted in policy order.
-		expect(workRoutesAttempted.map((route) => route.model)).toEqual([
-			"gpt-5.6-sol",
-			"claude-opus-4.8",
+		// All three exact Works routes were attempted in policy order:
+		// the two frontier routes, then the minimax-direct fallback. Each
+		// attempt threw a classified ModelCapacityError, which is the only
+		// way the engine would continue iterating rather than re-throwing.
+		expect(
+			workRoutesAttempted.map((route) => [route.provider, route.model]),
+		).toEqual([
+			["codex", "gpt-5.6-sol"],
+			["copilot", "claude-opus-4.8"],
+			["minimax-direct", "minimax-m3"],
 		]);
-		// minimax-direct/minimax-m3 was never invoked on any phase.
-		const minimaxRoutes = workRoutesAttempted.filter(
-			(route) =>
-				route.provider === "minimax-direct" &&
-				route.model === "minimax-m3",
-		);
-		expect(minimaxRoutes).toHaveLength(0);
 	});
 });

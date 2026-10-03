@@ -44,9 +44,15 @@ A modular live `OfficeRunner` adapter lives alongside the seed under
 - The `minimax-direct` provider routes `minimax-m3` and is backed at runtime
   by an OpenAI-completions LiteLLM gateway. No OpenCode MiniMax route
   appears in source or tests.
-- `works` is frontier-only; the fallback `minimax-m3` route is removed from
-  the `works` policy. Planning and audit still keep `minimax-m3` as an
-  explicit fallback.
+- `works` tries frontier routes first (`codex/gpt-5.6-sol` and
+  `copilot/claude-opus-4.8`) and falls back to `minimax-direct/minimax-m3`
+  only when the frontier routes are exhausted by a `ModelCapacityError`.
+  Planning and audit also keep `minimax-direct/minimax-m3` as an explicit
+  fallback.
+- The live runner validates the route's `thinking` value at the runner
+  boundary and accepts only `"low"` and `"medium"`. Any other runtime
+  value (cast, JSON-derived, otherwise malformed) is rejected before the
+  transport is called; the runner never silently clamps to a default.
 - Only explicit quota, capacity, rate-limit, or token-exhaustion signals
   map to `ModelCapacityError` and trigger fallback. Malformed structured
   output, network errors, and arbitrary provider errors raise plain

@@ -7,7 +7,12 @@ import type {
 	OfficeTransportRequest,
 	OfficeTransportResponse,
 } from "../src/office-transport.ts";
-import type { AuditInput, PlanningInput, WorksInput } from "../src/types.ts";
+import type {
+	AuditInput,
+	ModelRoute,
+	PlanningInput,
+	WorksInput,
+} from "../src/types.ts";
 
 class FakeTransport implements OfficeTransport {
 	readonly calls: OfficeTransportRequest[] = [];
@@ -267,5 +272,126 @@ describe("createLiveRunner", () => {
 		await expect(runner.audit(input, route)).rejects.toThrow(
 			/Office output rejected/,
 		);
+	});
+
+	it("rejects a high thinking value before the transport is called", async () => {
+		// Simulate a route whose thinking field was set to a value outside
+		// the accepted "low" | "medium" set (e.g. from a JSON round-trip or
+		// a stray cast). The live runner must reject it before invoking the
+		// transport; it must never silently clamp to "low" or "medium".
+		const transport = okTransport(
+			JSON.stringify({
+				summary: "a",
+				tasks: ["t"],
+				successConditions: ["c"],
+			}),
+		);
+		const runner = createLiveRunner({ transport });
+		const bypassRoute = {
+			provider: "codex",
+			model: "gpt-5.6-sol",
+			thinking: "high",
+			tier: "frontier",
+		} as unknown as ModelRoute;
+		await expect(runner.plan(planning, bypassRoute)).rejects.toThrow(
+			/Office runner rejected thinking value/,
+		);
+		expect(transport.calls).toHaveLength(0);
+	});
+
+	it("rejects a max thinking value before the transport is called", async () => {
+		const transport = okTransport(
+			JSON.stringify({
+				summary: "a",
+				body: "b",
+				evidence: ["e"],
+			}),
+		);
+		const runner = createLiveRunner({ transport });
+		const bypassRoute = {
+			provider: "minimax-direct",
+			model: "minimax-m3",
+			thinking: "max",
+			tier: "fallback",
+		} as unknown as ModelRoute;
+		const input: WorksInput = {
+			...planning,
+			workOrder: {
+				summary: "w",
+				tasks: ["t"],
+				successConditions: ["c"],
+			},
+		};
+		await expect(runner.work(input, bypassRoute)).rejects.toThrow(
+			/Office runner rejected thinking value/,
+		);
+		expect(transport.calls).toHaveLength(0);
+	});
+
+	it("rejects a missing thinking value before the transport is called", async () => {
+		const transport = okTransport(
+			JSON.stringify({
+				summary: "a",
+				tasks: ["t"],
+				successConditions: ["c"],
+			}),
+		);
+		const runner = createLiveRunner({ transport });
+		const bypassRoute = {
+			provider: "codex",
+			model: "gpt-5.6-sol",
+			thinking: undefined,
+			tier: "frontier",
+		} as unknown as ModelRoute;
+		await expect(runner.plan(planning, bypassRoute)).rejects.toThrow(
+			/Office runner rejected thinking value/,
+		);
+		expect(transport.calls).toHaveLength(0);
+	});
+
+	it("forwards low thinking to the transport unchanged", async () => {
+		const transport = okTransport(
+			JSON.stringify({
+				summary: "a",
+				tasks: ["t"],
+				successConditions: ["c"],
+			}),
+		);
+		const runner = createLiveRunner({ transport });
+		const lowRoute = {
+			provider: "minimax-direct" as const,
+			model: "minimax-m3",
+			thinking: "low" as const,
+			tier: "fallback" as const,
+		};
+		await runner.plan(planning, lowRoute);
+		expect(transport.calls[0]?.thinking).toBe("low");
+	});
+
+	it("forwards medium thinking to the transport unchanged", async () => {
+		const transport = okTransport(
+			JSON.stringify({
+				summary: "a",
+				body: "b",
+				evidence: ["e"],
+			}),
+		);
+		const runner = createLiveRunner({ transport });
+		const input: WorksInput = {
+			...planning,
+			workOrder: {
+				summary: "w",
+				tasks: ["t"],
+				successConditions: ["c"],
+			},
+		};
+		const mediumRoute = {
+			provider: "codex" as const,
+			model: "gpt-5.6-sol",
+			thinking: "medium" as const,
+			tier: "frontier" as const,
+		};
+		await runner.work(input, mediumRoute);
+		expect(transport.calls[0]?.thinking).toBe("medium");
 	});
 });
