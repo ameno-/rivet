@@ -1,0 +1,49 @@
+{
+	"name": "example-pi-mate",
+	"version": "2.0.21",
+	"private": true,
+	"type": "module",
+	"description": "Standalone Rivet Pi Mate: one durable Pi Actor behind a stable first-mate key, independent of Mugamaa and Centaur's pi.rs harness.",
+	"scripts": {
+		"dev": "srvx --import tsx src/server.ts",
+		"start": "tsx src/runtime.ts",
+		"build": "tsup",
+		"check-types": "tsc --noEmit",
+		"test": "vitest run",
+		"test:live": "vitest run --config vitest.live.config.ts",
+		"client": "tsx scripts/client.ts",
+		"chat": "tsx scripts/chat.ts"
+	},
+	"dependencies": {
+		"@earendil-works/pi-ai": "1.1.0",
+		"@earendil-works/pi-coding-agent": "1.1.0",
+		"@earendil-works/pi-durable": "1.1.0",
+		"@hono/node-server": "^1.19.7",
+		"@rivet-dev/pi": "0.5.2",
+		"@rivet-dev/sandbox-adapter": "0.5.2",
+		"hono": "^4.12.25",
+		"rivetkit": "workspace:*"
+	},
+	"optionalDependencies": {
+		"@daytonaio/sdk": "^0.216.0"
+	},
+	"devDependencies": {
+		"@types/node": "^24.0.0",
+		"srvx": "^0.10.0",
+		"tsup": "^8.5.1",
+		"tsx": "^4.20.3",
+		"typescript": "^5.9.2",
+		"vitest": "^3.2.4"
+	},
+	"stableVersion": "0.8.0",
+	"template": {
+		"technologies": ["rivet", "hono", "typescript"],
+		"tags": ["durable-agents", "ai-coding-agent"],
+		"frontendPort": 5173,
+		"noFrontend": true
+	},
+	"license": "MIT",
+	"engines": {
+		"node": ">=22.19.0"
+	}
+}
