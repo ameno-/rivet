@@ -1,0 +1,4 @@
+node_modules/
+# Build outputs of deploy/build.sh (engine binary and bundled runtime)
+deploy/engine/rivet-engine
+deploy/mate/mate-runtime.mjs

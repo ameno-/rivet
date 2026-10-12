@@ -1,0 +1,261 @@
+# Standalone Pi Mate deployment.
+#
+# One namespace, two workloads, deliberately separate from any other service
+# on the cluster:
+#
+#   pi-mate-engine   StatefulSet + PVC — the durable Rivet Engine host. It owns
+#                    actor state (every Mate Pi session), so it gets a volume
+#                    and a stable identity. Losing the volume loses every
+#                    session; the runtime can be replaced at will.
+#   pi-mate-runtime  Deployment — the Mate executor. Stateless: it connects to
+#                    the Engine and serves actors, so a restart or re-deploy
+#                    never loses or duplicates state.
+#
+# The model provider is an OpenAI-compatible gateway (see PI_MATE_GATEWAY_*),
+# configured through the pi-mate-env Secret and the pi-mate-config ConfigMap.
+# No credential appears in this file.
+#
+# Apply with deploy/deploy.sh, which stages images, imports them into k3s,
+# creates the Secret, and applies this manifest.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pi-mate
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pi-mate-engine-config
+  namespace: pi-mate
+data:
+  config.json: |
+    {
+      "auth": {
+        "admin_token": "__TOKEN__"
+      },
+      "topology": {
+        "datacenter_label": 1,
+        "datacenters": {
+          "default": {
+            "datacenter_label": 1,
+            "is_leader": true,
+            "public_url": "http://pi-mate-engine:6420",
+            "peer_url": "http://pi-mate-engine:6421"
+          }
+        }
+      }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pi-mate-config
+  namespace: pi-mate
+data:
+  # The gateway's model surface. The Mate registers these under the
+  # `gateway` provider; PI_MATE_MODEL defaults to the first entry.
+  PI_MATE_GATEWAY_BASE_URL: "https://hostinger-gateway.tail98db32.ts.net:8449/v1"
+  PI_MATE_GATEWAY_MODEL_IDS: "minimax-m3"
+  PI_MATE_GATEWAY_API_KEY_ENV_VAR: "LITELLM_GATEWAY_API_KEY"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pi-mate-engine
+  namespace: pi-mate
+spec:
+  selector:
+    app: pi-mate-engine
+  ports:
+    - name: api
+      port: 6420
+      targetPort: 6420
+    - name: peer
+      port: 6421
+      targetPort: 6421
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pi-mate-engine
+  namespace: pi-mate
+spec:
+  serviceName: pi-mate-engine
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pi-mate-engine
+  template:
+    metadata:
+      labels:
+        app: pi-mate-engine
+    spec:
+      # The engine config needs the admin token from the Secret, but a
+      # ConfigMap cannot reference one. An init container writes the merged
+      # config to an emptyDir the engine reads, so no token ever lands in a
+      # ConfigMap or an image.
+      initContainers:
+        - name: config
+          image: alpine:3.20
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c"]
+          args:
+            - sed -e "s|__TOKEN__|${RIVET_TOKEN}|" /template/config.json > /etc/rivet/config.json
+          env:
+            - name: RIVET_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: pi-mate-env
+                  key: RIVET_TOKEN
+          volumeMounts:
+            - name: engine-config-template
+              mountPath: /template
+            - name: engine-config
+              mountPath: /etc/rivet
+      containers:
+        - name: engine
+          image: pi-mate-engine:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: api
+              containerPort: 6420
+            - name: peer
+              containerPort: 6421
+          volumeMounts:
+            - name: engine-state
+              mountPath: /var/lib/rivet-engine
+            - name: engine-config
+              mountPath: /etc/rivet
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: peer
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: engine-config-template
+          configMap:
+            name: pi-mate-engine-config
+        - name: engine-config
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: engine-state
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pi-mate-runtime
+  namespace: pi-mate
+spec:
+  selector:
+    app: pi-mate-runtime
+  ports:
+    - name: http
+      port: 6423
+      targetPort: 6423
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pi-mate-runtime
+  namespace: pi-mate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pi-mate-runtime
+  template:
+    metadata:
+      labels:
+        app: pi-mate-runtime
+    spec:
+      # A remote Rivet endpoint does not provision the runner config itself.
+      # Create or update it after the Engine is ready and before the Mate
+      # runtime starts. This is idempotent and survives runtime restarts.
+      initContainers:
+        - name: runner-config
+          image: curlimages/curl:8.10.1
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              curl --fail --silent --show-error
+              --retry 30 --retry-all-errors --retry-delay 2
+              -X PUT
+              -H "Authorization: Bearer ${RIVET_TOKEN}"
+              -H "Content-Type: application/json"
+              --data '{"datacenters":{"default":{"normal":{},"drain_on_version_upgrade":true}}}'
+              "http://pi-mate-engine:6420/runner-configs/default?namespace=default"
+          env:
+            - name: RIVET_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: pi-mate-env
+                  key: RIVET_TOKEN
+      containers:
+        - name: runtime
+          image: pi-mate-runtime:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 6423
+          env:
+            # The Engine's in-cluster address. Non-loopback by design: the
+            # deployed runtime refuses loopback endpoints so it can never
+            # adopt a co-located Engine.
+            - name: RIVET_ENDPOINT
+              value: http://pi-mate-engine:6420
+            - name: RIVET_NAMESPACE
+              value: default
+            - name: PI_MATE_NAMESPACE
+              value: default
+            - name: RIVET_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: pi-mate-env
+                  key: RIVET_TOKEN
+            - name: PI_MATE_GATEWAY_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: pi-mate-config
+                  key: PI_MATE_GATEWAY_BASE_URL
+            - name: PI_MATE_GATEWAY_MODEL_IDS
+              valueFrom:
+                configMapKeyRef:
+                  name: pi-mate-config
+                  key: PI_MATE_GATEWAY_MODEL_IDS
+            - name: PI_MATE_GATEWAY_API_KEY_ENV_VAR
+              valueFrom:
+                configMapKeyRef:
+                  name: pi-mate-config
+                  key: PI_MATE_GATEWAY_API_KEY_ENV_VAR
+            - name: LITELLM_GATEWAY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: pi-mate-env
+                  key: LITELLM_GATEWAY_API_KEY
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
